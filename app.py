@@ -1,333 +1,97 @@
 import os
 import re
-from datetime import datetime
-import threading
+from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
-import pdfplumber
-import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment
-from PIL import Image
-import pytesseract
+from tkinter import filedialog, messagebox
 
-def seleziona_cartella():
-    path = filedialog.askdirectory()
-    if path:
-        entry_path.delete(0, tk.END)
-        entry_path.insert(0, path)
+# Librerie per la lettura dei PDF
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
 
-def analizza_file_comuni(cartella):
-    if not os.path.exists(cartella):
-        messagebox.showerror("Errore", "La cartella specificata non esiste.")
-        return None
-    valid_extensions = ('.pdf', '.jpg', '.jpeg', '.png')
-    file_list = []
-    for root_dir, _, files in os.walk(cartella):
-        for filename in files:
-            if filename.lower().endswith(valid_extensions):
-                file_list.append((root_dir, filename))
-    return file_list
+try:
+    import pytesseract
+    from pdf2image import convert_from_path
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
 
-def analizza_file_trasporti(cartella):
-    if not os.path.exists(cartella):
-        messagebox.showerror("Errore", "La cartella specificata non esiste.")
-        return None
-    
-    valid_extensions = ('.pdf', '.jpg', '.jpeg', '.png')
-    file_list = []
-    for root_dir, _, files in os.walk(cartella):
-        for filename in files:
-            if filename.lower().endswith(valid_extensions):
-                file_list.append((root_dir, filename))
-                    
-    return file_list
 
-def estrai_testo_da_pdf(file_path):
-    """Estrae il testo da un PDF, supportando anche i PDF scansionati tramite OCR."""
-    text = ""
-    try:
-        with pdfplumber.open(file_path) as pdf:
-            if len(pdf.pages) > 0:
-                page = pdf.pages[0]
-                text = page.extract_text() or ""
-                
-                # Se il PDF è una scansione (testo vuoto o quasi), usa l'OCR sulla pagina
-                if len(text.strip()) < 10:
-                    pil_img = page.to_image().image
-                    text = pytesseract.image_to_string(pil_img) or ""
-    except Exception as e:
-        print(f"Errore lettura PDF {file_path}: {e}")
-    return text
-
-def estrai_mesi_e_anno(text, text_lower, filename=""):
-    mesi_mappa = {
-        'gennaio': 'Gennaio', 'febbraio': 'Febbraio', 'marzo': 'Marzo', 'aprile': 'Aprile',
-        'maggio': 'Maggio', 'giugno': 'Giugno', 'luglio': 'Luglio', 'agosto': 'Agosto',
-        'settembre': 'Settembre', 'ottobre': 'Ottobre', 'novembre': 'Novembre', 'dicembre': 'Dicembre',
-        'gen': 'Gen', 'feb': 'Feb', 'mar': 'Mar', 'apr': 'Apr',
-        'mag': 'Mag', 'giu': 'Giu', 'lug': 'Lug', 'ago': 'Ago',
-        'set': 'Set', 'ott': 'Ott', 'nov': 'Nov', 'dic': 'Dic'
+def estrai_dati_testo(testo):
+    """Estrae periodo, quantità e unità di misura usando le regular expression."""
+    dati = {
+        "periodo": "Non trovato",
+        "quantita": "Non trovata",
+        "unita_misura": "Non trovata"
     }
-    anno = "Non rilevato"
-    periodo = "Non rilevato"
     
-    source_to_check = f"{filename} {text}"
-    years = re.findall(r'\b(20\d{2})\b', source_to_check)
-    if years:
-        anno = years[0]
-        
-    found_mesi = []
-    source_lower = f"{filename.lower()} {text_lower}"
-    for m_key, m_val in mesi_mappa.items():
-        if re.search(r'\b' + m_key + r'\b', source_lower):
-            if m_val not in found_mesi:
-                found_mesi.append(m_val)
-    if found_mesi:
-        periodo = found_mesi[0] if len(found_mesi) == 1 else f"{found_mesi[0]} - {found_mesi[-1]}"
-        
-    return periodo, anno
+    # Pulizia del testo
+    testo_pulito = " ".join(testo.split())
 
-def avvia_energia_elettrica():
-    threading.Thread(target=_process_energia_elettrica, daemon=True).start()
+    # 1. Ricerca Unità di Misura e Quantità (es. 500 litri, 1.250 L, 450 mc)
+    # Cerca numeri seguiti da unità comuni per il gasolio
+    match_qta = re.search(r'(\d{1,3}(?:\.\d{3})*(?:,\d+)?)\s*(litri|l\b|mc|metri cubi|kg)', testo_pulito, re.IGNORECASE)
+    if match_qta:
+        dati["quantita"] = match_qta.group(1)
+        dati["unita_misura"] = match_qta.group(2).lower()
 
-def _process_energia_elettrica():
-    azienda = entry_azienda.get().strip()
-    cartella = entry_path.get().strip()
-    if not azienda or not cartella:
-        messagebox.showerror("Errore", "Inserisci il nome dell'azienda e seleziona una cartella valida.")
+    # 2. Ricerca Periodo di riferimento (es. Gennaio 2026, dal 01/01/2026 al 31/01/2026)
+    match_periodo = re.search(r'(?:periodo|competenza|dal)[:\s]*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4}(?:\s+al\s+[0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})?|[A-Za-z]+\s+[0-9]{4})', testo_pulito, re.IGNORECASE)
+    if match_periodo:
+        dati["periodo"] = match_periodo.group(1)
+
+    return dati
+
+Dati_estratti = []
+
+def elabora_fatture():
+    root = tk.Tk()
+    root.withdraw()
+    
+    # Selezione cartella di input
+    cartella_input = filedialog.askdirectory(title="Seleziona la cartella contenente le fatture del gasolio")
+    if not cartella_input:
         return
 
-    file_list = analizza_file_comuni(cartella)
-    if not file_list:
-        messagebox.showwarning("Attenzione", "Nessun file valido trovato nella cartella.")
+    file_pdf = list(Path(cartella_input).glob("*.pdf")) + list(Path(cartella_input).glob("*.PDF"))
+    
+    if not file_pdf:
+        messagebox.showwarning("Attenzione", "Nessun file PDF trovato nella cartella selezionata.")
         return
 
-    total_files = len(file_list)
-    progress_elec.config(maximum=total_files, value=0)
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Consumi Elettrici"
+    risultati = []
     
-    ws.append([f"Estrazione dati bollette energia elettrica - {datetime.now().strftime('%d/%m/%Y %H:%M')}"])
-    ws.cell(row=1, column=1).font = Font(size=12, bold=True, color="1F497D")
-    ws.append([])
-    
-    headers = ["Azienda", "Nome File", "Periodo", "Anno", "Quantità", "Unità di misura"]
-    ws.append(headers)
-    for col in range(1, len(headers) + 1):
-        cell = ws.cell(row=3, column=col)
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-
-    valid_count = 0
-    for idx, (root_dir, filename) in enumerate(file_list, 1):
-        file_path = os.path.join(root_dir, filename)
-        ext = filename.lower()
-        quantita = "Non rilevato"
-        unita_misura = "kWh"
-        periodo = "Non rilevato"
-        anno = "Non rilevato"
-        text = ""
-        
+    for file_path in file_pdf:
+        testo_totale = ""
         try:
-            if ext.endswith('.pdf'):
-                text = estrai_testo_da_pdf(file_path)
-            elif ext.endswith(('.jpg', '.jpeg', '.png')):
-                text = pytesseract.image_to_string(Image.open(file_path)) or ""
-
-            text_lower = text.lower()
-            periodo, anno = estrai_mesi_e_anno(text, text_lower, filename)
+            # Tentativo 1: Lettura testo nativo con pypdf
+            if PdfReader:
+                reader = PdfReader(str(file_path))
+                for pagina in reader.pages:
+                    testo_pagina = pagina.extract_text()
+                    if testo_pagina:
+                        testo_totale += testo_pagina + "\n"
             
-            match_kwh = re.search(r'(\d+[\.,]?\d*)\s*(?:kWh|KWh|KWH)', text)
-            if match_kwh:
-                quantita = match_kwh.group(1)
-
-            if quantita != "Non rilevato":
-                row_idx = ws.max_row + 1
-                ws.append([azienda, filename, periodo, anno, quantita, unita_misura])
-                ws.cell(row=row_idx, column=2).hyperlink = os.path.abspath(file_path)
-                ws.cell(row=row_idx, column=2).font = Font(color="0563C1", underline="single")
-                valid_count += 1
-        except Exception:
-            pass
-
-        progress_elec.config(value=idx)
-        lbl_status_elec.config(text=f"Controllati: {idx} / {total_files} (Validi: {valid_count})")
-
-    if valid_count == 0:
-        messagebox.showwarning("Attenzione", "Nessuna bolletta elettrica valida trovata.")
-        return
-
-    desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-    out_path = os.path.join(desktop, f"Consumi_Elettrici_{azienda.replace(' ', '_')}.xlsx")
-    wb.save(out_path)
-    messagebox.showinfo("Successo", f"File Excel salvato sul Desktop:\n{os.path.basename(out_path)}")
-
-def avvia_trasporti():
-    threading.Thread(target=_process_trasporti, daemon=True).start()
-
-def _process_trasporti():
-    azienda = entry_azienda.get().strip()
-    cartella = entry_path.get().strip()
-    if not azienda or not cartella:
-        messagebox.showerror("Errore", "Inserisci il nome dell'azienda e seleziona una cartella valida.")
-        return
-
-    file_list = analizza_file_trasporti(cartella)
-    if not file_list:
-        messagebox.showwarning("Attenzione", "Nessun file valido trovato nelle cartelle.")
-        return
-
-    total_files = len(file_list)
-    progress_trans.config(maximum=total_files, value=0)
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Trasporti Carburante"
-    
-    ws.append([f"Estrazione dati fatture carburante - {datetime.now().strftime('%d/%m/%Y %H:%M')}"])
-    ws.cell(row=1, column=1).font = Font(size=12, bold=True, color="2E7D32")
-    ws.append([])
-    
-    headers = ["Azienda", "Nome File", "Periodo", "Anno", "Quantità", "Unità di misura", "Carburante"]
-    ws.append(headers)
-    for col in range(1, len(headers) + 1):
-        cell = ws.cell(row=3, column=col)
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill(start_color="2E7D32", end_color="2E7D32", fill_type="solid")
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-
-    valid_count = 0
-    for idx, (root_dir, filename) in enumerate(file_list, 1):
-        file_path = os.path.join(root_dir, filename)
-        abs_path = os.path.abspath(file_path)
-        ext = filename.lower()
-        
-        quantita = "Non rilevato"
-        unita_misura = "Litri"
-        carburante = "Non rilevato"
-        periodo = "Non rilevato"
-        anno = "Non rilevato"
-        text = ""
-        
-        try:
-            if ext.endswith('.pdf'):
-                text = estrai_testo_da_pdf(file_path)
-            elif ext.endswith(('.jpg', '.jpeg', '.png')):
-                text = pytesseract.image_to_string(Image.open(file_path)) or ""
-
-            text_lower = text.lower()
-            periodo, anno = estrai_mesi_e_anno(text, text_lower, filename)
+            # Tentativo 2: Se il testo è vuoto e OCR è disponibile, usa Tesseract
+            if not testo_totale.strip() and OCR_AVAILABLE:
+                immagini = convert_from_path(str(file_path))
+                for img in immagini:
+                    testo_totale += pytesseract.image_to_string(img, language='ita') + "\n"
             
-            combined_check = f"{root_dir.lower()} {text_lower} {filename.lower()}"
-            if "benzina" in combined_check:
-                carburante = "Benzina"
-            elif any(k in combined_check for k in ["gasolio", "diesel", "carbur"]):
-                carburante = "Gasolio"
+            # Estrazione informazioni
+            info = estrai_dati_testo(testo_totale)
+            risultati.append(f"File: {file_path.name}\n- Periodo: {info['periodo']}\n- Quantità: {info['quantita']} {info['unita_misura']}\n" + "-"*40)
+            
+        except Exception as e:
+            risultati.append(f"File: {file_path.name} -> Errore di lettura: {str(e)}\n" + "-"*40)
 
-            # Cerca pattern quantità seguito da unità di misura (es. 2.500,00 L oppure 100 litri)
-            match = re.search(r'([\d\.]+,\d{2})\s+[\d\.,]+\s+([A-Za-z]+)', text)
-            if match:
-                quantita = match.group(1)
-                um_raw = match.group(2).upper()
-                unita_misura = "kg" if "KG" in um_raw else "Litri"
-            else:
-                match_fallback = re.search(r'([\d\.]+,\d{2})\s*(?:litri|Litri|L\b|litro|kg|KG)', text, re.IGNORECASE)
-                if match_fallback:
-                    quantita = match_fallback.group(1)
-                    if "kg" in match_fallback.group(0).lower():
-                        unita_misura = "kg"
+    # Scrittura del file di testo sul Desktop
+    desktop_path = Path.home() / "Desktop" / "riepilogo_fatture_gasolio.txt"
+    with open(desktop_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(risultati))
 
-            row_idx = ws.max_row + 1
-            ws.append([azienda, filename, periodo, anno, quantita, unita_misura, carburante])
-            cell_file = ws.cell(row=row_idx, column=2)
-            cell_file.hyperlink = abs_path
-            cell_file.font = Font(color="0563C1", underline="single")
-            valid_count += 1
-        except Exception:
-            row_idx = ws.max_row + 1
-            ws.append([azienda, filename, "-", "-", "Non rilevato", "Litri", "Non rilevato"])
-            cell_file = ws.cell(row=row_idx, column=2)
-            cell_file.hyperlink = abs_path
-            cell_file.font = Font(color="0563C1", underline="single")
-            valid_count += 1
+    messagebox.Success("Completato", f"Elaborazione terminata!\nFile salvato sul desktop:\n{desktop_path.name}")
 
-        progress_trans.config(value=idx)
-        lbl_status_trans.config(text=f"Processati: {idx} / {total_files}")
-
-    desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-    out_path = os.path.join(desktop, f"Consumi_Trasporti_{azienda.replace(' ', '_')}.xlsx")
-    wb.save(out_path)
-    messagebox.showinfo("Successo", f"File Excel salvato sul Desktop:\n{os.path.basename(out_path)}")
-
-# Configurazione Interfaccia Grafica
-root = tk.Tk()
-root.title("Motore ESG - Estrazione Consumi")
-root.geometry("740x600")
-root.resizable(False, False)
-root.configure(bg="#ffffff")
-
-FONT_FAMILY = "Segoe UI"
-
-lbl_main_title = tk.Label(root, text="Motore ESG", font=(FONT_FAMILY, 18, "bold"), bg="#ffffff", fg="#2e7d32")
-lbl_main_title.pack(pady=(18, 2))
-
-lbl_main_sub = tk.Label(root, text="Estrazione Consumi Rapida", font=(FONT_FAMILY, 10), bg="#ffffff", fg="#64748b")
-lbl_main_sub.pack(pady=(0, 16))
-
-frame_inputs = tk.Frame(root, bg="#ffffff")
-frame_inputs.pack(padx=30, fill="x", pady=5)
-
-tk.Label(frame_inputs, text="Nome Azienda/Cliente (senza spazi):", font=(FONT_FAMILY, 10, "bold"), bg="#ffffff", fg="#334155").pack(anchor="w", pady=(0, 4))
-entry_azienda = tk.Entry(frame_inputs, font=(FONT_FAMILY, 10), relief="solid", bd=1)
-entry_azienda.pack(fill="x", ipady=5, pady=(0, 12))
-
-tk.Label(frame_inputs, text="Percorso Server/Cartella Principale (Root):", font=(FONT_FAMILY, 10, "bold"), bg="#ffffff", fg="#334155").pack(anchor="w", pady=(0, 4))
-
-frame_path_row = tk.Frame(frame_inputs, bg="#ffffff")
-frame_path_row.pack(fill="x")
-
-entry_path = tk.Entry(frame_path_row, font=(FONT_FAMILY, 10), relief="solid", bd=1)
-entry_path.pack(side="left", fill="x", expand=True, ipady=5, padx=(0, 8))
-
-btn_browse = tk.Button(frame_path_row, text="Sfoglia...", command=seleziona_cartella, font=(FONT_FAMILY, 9, "bold"), bg="#e2e8f0", fg="#334155", relief="flat", cursor="hand2", padx=16, pady=5)
-btn_browse.pack(side="right")
-
-frame_cards = tk.Frame(root, bg="#ffffff")
-frame_cards.pack(padx=30, pady=20, fill="both", expand=True)
-
-# Card 1: Energia Elettrica
-card_elec = tk.Frame(frame_cards, bg="#ffffff", highlightbackground="#cbd5e1", highlightthickness=1, bd=0)
-card_elec.pack(side="left", fill="both", expand=True, padx=(0, 10))
-
-tk.Label(card_elec, text="Ambiente - Energia Elettrica", font=(FONT_FAMILY, 12, "bold"), bg="#ffffff", fg="#2e7d32").pack(pady=(16, 6))
-tk.Label(card_elec, text="Estrai kWh da Prima Pagina\ncon Link diretti.", font=(FONT_FAMILY, 9), bg="#ffffff", fg="#64748b", justify="center").pack(pady=(0, 12))
-
-btn_elec = tk.Button(card_elec, text="Avvia Energia Elettrica", command=avvia_energia_elettrica, bg="#2e7d32", fg="white", font=(FONT_FAMILY, 10, "bold"), relief="flat", cursor="hand2", pady=8, padx=12)
-btn_elec.pack(pady=(0, 12))
-
-progress_elec = ttk.Progressbar(card_elec, orient="horizontal", length=220, mode="determinate")
-progress_elec.pack(pady=(0, 4))
-
-lbl_status_elec = tk.Label(card_elec, text="In attesa...", font=(FONT_FAMILY, 8), bg="#ffffff", fg="#64748b")
-lbl_status_elec.pack(pady=(0, 14))
-
-# Card 2: Trasporti
-card_trans = tk.Frame(frame_cards, bg="#ffffff", highlightbackground="#cbd5e1", highlightthickness=1, bd=0)
-card_trans.pack(side="right", fill="both", expand=True, padx=(10, 0))
-
-tk.Label(card_trans, text="Ambiente - Trasporti", font=(FONT_FAMILY, 12, "bold"), bg="#ffffff", fg="#2e7d32").pack(pady=(16, 6))
-tk.Label(card_trans, text="Estrai litri e tipo carburante\n(gasolio/benzina).", font=(FONT_FAMILY, 9), bg="#ffffff", fg="#64748b", justify="center").pack(pady=(0, 12))
-
-btn_trans = tk.Button(card_trans, text="Avvia Trasporti", command=avvia_trasporti, bg="#2e7d32", fg="white", font=(FONT_FAMILY, 10, "bold"), relief="flat", cursor="hand2", pady=8, padx=12)
-btn_trans.pack(pady=(0, 12))
-
-progress_trans = ttk.Progressbar(card_trans, orient="horizontal", length=220, mode="determinate")
-progress_trans.pack(pady=(0, 4))
-
-lbl_status_trans = tk.Label(card_trans, text="In attesa...", font=(FONT_FAMILY, 8), bg="#ffffff", fg="#64748b")
-lbl_status_trans.pack(pady=(0, 14))
-
-root.mainloop()
+if __name__ == "__main__":
+    elabora_fatture()
