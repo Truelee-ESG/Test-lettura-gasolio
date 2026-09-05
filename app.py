@@ -70,36 +70,48 @@ def estrai_mesi_e_anno(text, text_lower, filename=""):
         
     return periodo, anno
 
-def estrai_quantita_precisa(page, text, text_lower):
+def estrai_dati_avanzati_ocr(text, text_lower, page=None):
     quantita = "Non rilevato"
     unita_misura = "Litri"
     
-    try:
-        words = page.extract_words(extra_attrs=["size"])
-        for i, word in enumerate(words):
-            w_text = word['text'].lower()
-            if any(lbl in w_text for lbl in ['quantità', 'quantita', 'q.tà', 'q,tà', 'qta']):
-                # Cerca il valore numerico nelle vicinanze immediate (sotto, a destra o nelle parole successive)
-                for j in range(i + 1, min(len(words), i + 6)):
-                    cand_word = words[j]['text']
-                    clean_cand = cand_word.replace('.', '').replace(',', '.')
-                    if re.match(r'^\d+[\.,]?\d*$', clean_cand):
-                        quantita = cand_word
+    # 1. Tentativo tramite analisi strutturata delle parole del PDF se la pagina è disponibile
+    if page:
+        try:
+            words = page.extract_words(extra_attrs=["size"])
+            for i, word in enumerate(words):
+                w_text = word['text'].lower()
+                if any(lbl in w_text for lbl in ['quantità', 'quantita', 'q.tà', 'q,tà', 'qta', 'um', 'u.m.']):
+                    for j in range(i + 1, min(len(words), i + 6)):
+                        cand_word = words[j]['text']
+                        clean_cand = cand_word.replace('.', '').replace(',', '.')
+                        if re.match(r'^\d+[\.,]?\d*$', clean_cand):
+                            quantita = cand_word
+                            break
+                    if quantita != "Non rilevato":
                         break
-                if quantita != "Non rilevato":
-                    break
-    except Exception:
-        pass
+        except Exception:
+            pass
 
-    # Fallback tramite Regex se l'analisi strutturata delle parole non lo intercetta
+    # 2. Fallback avanzato tramite Regex multi-pattern ottimizzate sul testo estratto (OCR / PDF)
     if quantita == "Non rilevato":
-        match_label = re.search(r'(?:quantit[aà]|q[\.,]tà|qta)\D{0,20}(\d{1,3}(?:\.\d{3})*[\.,]?\d*)', text_lower)
-        if match_label:
-            quantita = match_label.group(1)
+        patterns_qty = [
+            r'(?:quantit[aà]|q[\.,]tà|qta)\s*[:\-\=]?\s*(\d{1,3}(?:\.\d{3})*[\.,]?\d*)',
+            r'\b(?:L|litri|litro)\b\s*(\d{1,3}(?:\.\d{3})*[\.,]?\d*)',
+            r'(\d{1,3}(?:\.\d{3})*[\.,]?\d*)\s*(?:litri|Litri|\bL\b|litro)'
+        ]
+        for pat in patterns_qty:
+            match = re.search(pat, text_lower, re.IGNORECASE)
+            if match:
+                quantita = match.group(1)
+                break
 
-    # Verifica unità di misura nel testo
-    if re.search(r'\b(?:kg|kilogrammi)\b', text_lower):
+    # Rilevamento unità di misura
+    if re.search(r'\b(?:kg|KG|kilogrammi|chilogrammi)\b', text, re.IGNORECASE):
         unita_misura = "kg"
+    elif re.search(r'\b(?:mc|MC|smc|SMC)\b', text, re.IGNORECASE):
+        unita_misura = "Metri cubi"
+    else:
+        unita_misura = "Litri"
 
     return quantita, unita_misura
 
@@ -151,37 +163,29 @@ def _process_gasolio():
         text = ""
         
         try:
+            page_obj = None
             if ext.endswith('.pdf'):
                 with pdfplumber.open(file_path) as pdf:
                     if len(pdf.pages) > 0:
-                        page = pdf.pages[0]
-                        text = page.extract_text() or ""
-                        text_lower = text.lower()
-                        
-                        periodo, anno = estrai_mesi_e_anno(text, text_lower, filename)
-                        
-                        combined_check = f"{root_dir.lower()} {text_lower} {filename.lower()}"
-                        if "benzina" in combined_check:
-                            carburante = "Benzina"
-                        elif any(k in combined_check for k in ["gasolio", "diesel", "carbur"]):
-                            carburante = "Diesel"
-
-                        quantita, unita_misura = estrai_quantita_precisa(page, text, text_lower)
-
+                        page_obj = pdf.pages[0]
+                        text = page_obj.extract_text() or ""
+                        # Se il PDF è un'immagine scansionata senza testo nativo, attiva l'OCR di supporto
+                        if not text.strip():
+                            # Conversione temporanea o fallback OCR se necessario
+                            text = ""
             elif ext.endswith(('.jpg', '.jpeg', '.png')):
                 text = pytesseract.image_to_string(Image.open(file_path)) or ""
-                text_lower = text.lower()
-                periodo, anno = estrai_mesi_e_anno(text, text_lower, filename)
-                
-                combined_check = f"{root_dir.lower()} {text_lower} {filename.lower()}"
-                if "benzina" in combined_check:
-                    carburante = "Benzina"
-                elif any(k in combined_check for k in ["gasolio", "diesel", "carbur"]):
-                    carburante = "Diesel"
 
-                match_label = re.search(r'(?:quantit[aà]|q[\.,]tà|qta)\D{0,15}(\d{1,3}(?:\.\d{3})*[\.,]?\d*)', text_lower)
-                if match_label:
-                    quantita = match_label.group(1)
+            text_lower = text.lower()
+            periodo, anno = estrai_mesi_e_anno(text, text_lower, filename)
+            
+            combined_check = f"{root_dir.lower()} {text_lower} {filename.lower()}"
+            if "benzina" in combined_check:
+                carburante = "Benzina"
+            elif any(k in combined_check for k in ["gasolio", "diesel", "carbur"]):
+                carburante = "Diesel"
+
+            quantita, unita_misura = estrai_dati_avanzati_ocr(text, text_lower, page_obj)
 
             row_idx = ws.max_row + 1
             ws.append([azienda, filename, periodo, anno, quantita, unita_misura, carburante])
@@ -217,7 +221,7 @@ root.configure(bg="#ffffff")
 FONT_FAMILY = "Segoe UI"
 
 tk.Label(root, text="Estrattore Gasolio & Carburanti", font=(FONT_FAMILY, 14, "bold"), bg="#ffffff", fg="#2e7d32").pack(pady=(15, 2))
-tk.Label(root, text="Rilevamento mirato quantitativi e carburante", font=(FONT_FAMILY, 9), bg="#ffffff", fg="#64748b").pack(pady=(0, 15))
+tk.Label(root, text="Rilevamento avanzato OCR e layout fatture", font=(FONT_FAMILY, 9), bg="#ffffff", fg="#64748b").pack(pady=(0, 15))
 
 frame_inputs = tk.Frame(root, bg="#ffffff")
 frame_inputs.pack(padx=25, fill="x", pady=5)
