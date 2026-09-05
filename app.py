@@ -34,12 +34,23 @@ def analizza_file_trasporti(cartella):
         return None
     
     valid_extensions = ('.pdf', '.jpg', '.jpeg', '.png')
+    target_folder_keywords = ['gasolio', 'benzina', 'mezzi', 'auto', 'automezzi', 'trasporti', 'carburante', 'fleet', 'veicoli']
+    
     file_list = []
-    # MODIFICA: Scansione globale e approfondita di tutte le cartelle e sottocartelle senza filtri restrittivi
     for root_dir, _, files in os.walk(cartella):
-        for filename in files:
-            if filename.lower().endswith(valid_extensions):
-                file_list.append((root_dir, filename))
+        folder_name = os.path.basename(root_dir).lower()
+        is_target_dir = any(kw in folder_name or kw in root_dir.lower() for kw in target_folder_keywords)
+        
+        if is_target_dir:
+            for filename in files:
+                if filename.lower().endswith(valid_extensions):
+                    file_list.append((root_dir, filename))
+                    
+    if not file_list:
+        for root_dir, _, files in os.walk(cartella):
+            for filename in files:
+                if filename.lower().endswith(valid_extensions):
+                    file_list.append((root_dir, filename))
                     
     return file_list
 
@@ -197,7 +208,7 @@ def _process_trasporti():
 
     file_list = analizza_file_trasporti(cartella)
     if not file_list:
-        messagebox.showwarning("Attenzione", "Nessun file valido trovato nelle cartelle.")
+        messagebox.showwarning("Attenzione", "Nessun file valido trovato nelle cartelle di trasporto.")
         return
 
     total_files = len(file_list)
@@ -247,11 +258,13 @@ def _process_trasporti():
                         elif any(k in combined_check for k in ["gasolio", "diesel", "carbur"]):
                             carburante = "Gasolio"
 
+                        # Logica di estrazione quantità e unità di misura basata sul pattern delle fatture
                         match = re.search(r'([\d\.]+,\d{2})\s+([\d\.]+,\d{3})\s+([A-Z])', text)
                         if match:
                             quantita = match.group(1)
                             unita_misura = "L" if match.group(3).upper() == "L" else match.group(3)
                         else:
+                            # Ricerca con pattern alternativi / fallback
                             match_fallback = re.search(r'(\d+[\.,]?\d*)\s*(?:litri|Litri|L\b|litro|kg|KG)', text, re.IGNORECASE)
                             if match_fallback:
                                 quantita = match_fallback.group(1)
@@ -296,7 +309,7 @@ def _process_trasporti():
     wb.save(out_path)
     messagebox.showinfo("Successo", f"File Excel salvato sul Desktop:\n{os.path.basename(out_path)}")
 
-# Configurazione Interfaccia Grafica (Motore ESG)
+# Configurazione Interfaccia Grafica (Layout Motore ESG)
 root = tk.Tk()
 root.title("Motore ESG - Estrazione Consumi")
 root.geometry("740x600")
