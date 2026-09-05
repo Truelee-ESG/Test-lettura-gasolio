@@ -17,11 +17,11 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Installa le dipendenze
+    . - name: Installa le dipendenze
       run: |
         python -m pip install --upgrade pip
-        pip install pypdf pyinstaller
-
+        pip install pypdf pdfplumber pyinstaller
+        
     - name: Compila con PyInstaller
       run: |
         pyinstaller --onefile --noconsole main.py
