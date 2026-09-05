@@ -10,6 +10,7 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from PIL import Image
 import pytesseract
 
+
 def seleziona_cartella():
     path = filedialog.askdirectory()
     if path:
