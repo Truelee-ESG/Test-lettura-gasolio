@@ -34,25 +34,30 @@ def analizza_file_trasporti(cartella):
         return None
     
     valid_extensions = ('.pdf', '.jpg', '.jpeg', '.png')
-    target_folder_keywords = ['gasolio', 'benzina', 'mezzi', 'auto', 'automezzi', 'trasporti', 'carburante', 'fleet', 'veicoli']
-    
     file_list = []
     for root_dir, _, files in os.walk(cartella):
-        folder_name = os.path.basename(root_dir).lower()
-        is_target_dir = any(kw in folder_name or kw in root_dir.lower() for kw in target_folder_keywords)
-        
-        if is_target_dir:
-            for filename in files:
-                if filename.lower().endswith(valid_extensions):
-                    file_list.append((root_dir, filename))
-                    
-    if not file_list:
-        for root_dir, _, files in os.walk(cartella):
-            for filename in files:
-                if filename.lower().endswith(valid_extensions):
-                    file_list.append((root_dir, filename))
+        for filename in files:
+            if filename.lower().endswith(valid_extensions):
+                file_list.append((root_dir, filename))
                     
     return file_list
+
+def estrai_testo_da_pdf(file_path):
+    """Estrae il testo da un PDF, supportando anche i PDF scansionati tramite OCR."""
+    text = ""
+    try:
+        with pdfplumber.open(file_path) as pdf:
+            if len(pdf.pages) > 0:
+                page = pdf.pages[0]
+                text = page.extract_text() or ""
+                
+                # Se il PDF è una scansione (testo vuoto o quasi), usa l'OCR sulla pagina
+                if len(text.strip()) < 10:
+                    pil_img = page.to_image().image
+                    text = pytesseract.image_to_string(pil_img) or ""
+    except Exception as e:
+        print(f"Errore lettura PDF {file_path}: {e}")
+    return text
 
 def estrai_mesi_e_anno(text, text_lower, filename=""):
     mesi_mappa = {
@@ -128,52 +133,16 @@ def _process_energia_elettrica():
         
         try:
             if ext.endswith('.pdf'):
-                with pdfplumber.open(file_path) as pdf:
-                    if len(pdf.pages) > 0:
-                        page = pdf.pages[0]
-                        text = page.extract_text() or ""
-                        text_lower = text.lower()
-                        periodo, anno = estrai_mesi_e_anno(text, text_lower, filename)
-                        
-                        if "energia elettrica" in text_lower or "kwh" in text_lower:
-                            try:
-                                words = page.extract_words(extra_attrs=["size"])
-                                candidates = []
-                                for i, word in enumerate(words):
-                                    w_text = word['text']
-                                    if re.match(r'^(?:kWh|KWh|KWH)$', w_text):
-                                        for j in range(max(0, i-3), i):
-                                            prev_word = words[j]['text']
-                                            clean_prev = prev_word.replace('.', '').replace(',', '.')
-                                            if re.match(r'^\d+[\.,]?\d*$', clean_prev):
-                                                is_band = False
-                                                for k in range(max(0, j-2), min(len(words), j+3)):
-                                                    if re.match(r'^F[1-3]$', words[k]['text'], re.IGNORECASE):
-                                                        is_band = True
-                                                        break
-                                                if not is_band:
-                                                    candidates.append({
-                                                        'valore': prev_word,
-                                                        'size': words[j].get('size', 0)
-                                                    })
-                                if candidates:
-                                    candidates.sort(key=lambda x: x['size'], reverse=True)
-                                    quantita = candidates[0]['valore']
-                                else:
-                                    match_kwh = re.search(r'(\d+[\.,]?\d*)\s*(?:kWh|KWh|KWH)', text)
-                                    if match_kwh:
-                                        quantita = match_kwh.group(1)
-                            except Exception:
-                                match_kwh = re.search(r'(\d+[\.,]?\d*)\s*(?:kWh|KWh|KWH)', text)
-                                if match_kwh:
-                                    quantita = match_kwh.group(1)
+                text = estrai_testo_da_pdf(file_path)
             elif ext.endswith(('.jpg', '.jpeg', '.png')):
                 text = pytesseract.image_to_string(Image.open(file_path)) or ""
-                text_lower = text.lower()
-                periodo, anno = estrai_mesi_e_anno(text, text_lower, filename)
-                match_kwh = re.search(r'(\d+[\.,]?\d*)\s*(?:kWh|KWh|KWH)', text)
-                if match_kwh:
-                    quantita = match_kwh.group(1)
+
+            text_lower = text.lower()
+            periodo, anno = estrai_mesi_e_anno(text, text_lower, filename)
+            
+            match_kwh = re.search(r'(\d+[\.,]?\d*)\s*(?:kWh|KWh|KWH)', text)
+            if match_kwh:
+                quantita = match_kwh.group(1)
 
             if quantita != "Non rilevato":
                 row_idx = ws.max_row + 1
@@ -208,7 +177,7 @@ def _process_trasporti():
 
     file_list = analizza_file_trasporti(cartella)
     if not file_list:
-        messagebox.showwarning("Attenzione", "Nessun file valido trovato nelle cartelle di trasporto.")
+        messagebox.showwarning("Attenzione", "Nessun file valido trovato nelle cartelle.")
         return
 
     total_files = len(file_list)
@@ -245,46 +214,30 @@ def _process_trasporti():
         
         try:
             if ext.endswith('.pdf'):
-                with pdfplumber.open(file_path) as pdf:
-                    if len(pdf.pages) > 0:
-                        page = pdf.pages[0]
-                        text = page.extract_text() or ""
-                        text_lower = text.lower()
-                        periodo, anno = estrai_mesi_e_anno(text, text_lower, filename)
-                        
-                        combined_check = f"{root_dir.lower()} {text_lower} {filename.lower()}"
-                        if "benzina" in combined_check:
-                            carburante = "Benzina"
-                        elif any(k in combined_check for k in ["gasolio", "diesel", "carbur"]):
-                            carburante = "Gasolio"
-
-                        # Logica di estrazione quantità e unità di misura basata sul pattern delle fatture
-                        match = re.search(r'([\d\.]+,\d{2})\s+([\d\.]+,\d{3})\s+([A-Z])', text)
-                        if match:
-                            quantita = match.group(1)
-                            unita_misura = "L" if match.group(3).upper() == "L" else match.group(3)
-                        else:
-                            # Ricerca con pattern alternativi / fallback
-                            match_fallback = re.search(r'(\d+[\.,]?\d*)\s*(?:litri|Litri|L\b|litro|kg|KG)', text, re.IGNORECASE)
-                            if match_fallback:
-                                quantita = match_fallback.group(1)
-                                if "kg" in match_fallback.group(0).lower():
-                                    unita_misura = "kg"
+                text = estrai_testo_da_pdf(file_path)
             elif ext.endswith(('.jpg', '.jpeg', '.png')):
                 text = pytesseract.image_to_string(Image.open(file_path)) or ""
-                text_lower = text.lower()
-                periodo, anno = estrai_mesi_e_anno(text, text_lower, filename)
-                
-                combined_check = f"{root_dir.lower()} {text_lower} {filename.lower()}"
-                if "benzina" in combined_check:
-                    carburante = "Benzina"
-                elif any(k in combined_check for k in ["gasolio", "diesel", "carbur"]):
-                    carburante = "Gasolio"
 
-                match_qty = re.search(r'(\d+[\.,]?\d*)\s*(?:litri|Litri|L\b|litro|kg|KG)', text, re.IGNORECASE)
-                if match_qty:
-                    quantita = match_qty.group(1)
-                    if "kg" in match_qty.group(0).lower():
+            text_lower = text.lower()
+            periodo, anno = estrai_mesi_e_anno(text, text_lower, filename)
+            
+            combined_check = f"{root_dir.lower()} {text_lower} {filename.lower()}"
+            if "benzina" in combined_check:
+                carburante = "Benzina"
+            elif any(k in combined_check for k in ["gasolio", "diesel", "carbur"]):
+                carburante = "Gasolio"
+
+            # Cerca pattern quantità seguito da unità di misura (es. 2.500,00 L oppure 100 litri)
+            match = re.search(r'([\d\.]+,\d{2})\s+[\d\.,]+\s+([A-Za-z]+)', text)
+            if match:
+                quantita = match.group(1)
+                um_raw = match.group(2).upper()
+                unita_misura = "kg" if "KG" in um_raw else "Litri"
+            else:
+                match_fallback = re.search(r'([\d\.]+,\d{2})\s*(?:litri|Litri|L\b|litro|kg|KG)', text, re.IGNORECASE)
+                if match_fallback:
+                    quantita = match_fallback.group(1)
+                    if "kg" in match_fallback.group(0).lower():
                         unita_misura = "kg"
 
             row_idx = ws.max_row + 1
@@ -309,7 +262,7 @@ def _process_trasporti():
     wb.save(out_path)
     messagebox.showinfo("Successo", f"File Excel salvato sul Desktop:\n{os.path.basename(out_path)}")
 
-# Configurazione Interfaccia Grafica (Layout Motore ESG)
+# Configurazione Interfaccia Grafica
 root = tk.Tk()
 root.title("Motore ESG - Estrazione Consumi")
 root.geometry("740x600")
