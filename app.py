@@ -133,7 +133,6 @@ def _process_gasolio():
                         elif any(k in combined_check for k in ["gasolio", "diesel", "carbur"]):
                             carburante = "Diesel"
 
-                        # Estrazione mirata della quantità e unità di misura
                         match_qty = re.search(r'(\d{1,3}(?:\.\d{3})*[\.,]?\d*)\s*(?:litri|Litri|L\b|litro|kg|KG)', text, re.IGNORECASE)
                         if match_qty:
                             raw_q = match_qty.group(1)
@@ -188,41 +187,41 @@ def _process_gasolio():
     wb.save(out_path)
     messagebox.showinfo("Successo", f"File Excel salvato sul Desktop:\n{os.path.basename(out_path)}")
 
-# Interfaccia Grafica
+# Configurazione Interfaccia Grafica
 root = tk.Tk()
 root.title("Estrattore Consumi Gasolio")
-root.geometry("540x380")
+root.geometry("520x340")
 root.resizable(False, False)
 root.configure(bg="#ffffff")
 
 FONT_FAMILY = "Segoe UI"
 
-tk.Label(root, text="Estrattore Gasolio & Carburanti", font=(FONT_FAMILY, 16, "bold"), bg="#ffffff", fg="#2e7d32").pack(pady=(20, 5))
-tk.Label(root, text="Rilevamento automatico quantità, periodo e tipo carburante", font=(FONT_FAMILY, 9), bg="#ffffff", fg="#64748b").pack(pady=(0, 20))
+tk.Label(root, text="Estrattore Gasolio & Carburanti", font=(FONT_FAMILY, 14, "bold"), bg="#ffffff", fg="#2e7d32").pack(pady=(15, 2))
+tk.Label(root, text="Rilevamento automatico quantità e carburante", font=(FONT_FAMILY, 9), bg="#ffffff", fg="#64748b").pack(pady=(0, 15))
 
 frame_inputs = tk.Frame(root, bg="#ffffff")
-frame_inputs.pack(padx=30, fill="x", pady=5)
+frame_inputs.pack(padx=25, fill="x", pady=5)
 
-tk.Label(frame_inputs, text="Nome Azienda (senza spazi):", font=(FONT_FAMILY, 10, "bold"), bg="#ffffff", fg="#334155").pack(anchor="w", pady=(0, 4))
-entry_azienda = tk.Entry(frame_inputs, font=(FONT_FAMILY, 10), relief="solid", bd=1)
-entry_azienda.pack(fill="x", ipady=4, pady=(0, 12))
+tk.Label(frame_inputs, text="Nome Azienda (senza spazi):", font=(FONT_FAMILY, 9, "bold"), bg="#ffffff", fg="#334155").pack(anchor="w", pady=(0, 2))
+entry_azienda = tk.Entry(frame_inputs, font=(FONT_FAMILY, 9), relief="solid", bd=1)
+entry_azienda.pack(fill="x", ipady=3, pady=(0, 10))
 
-tk.Label(frame_inputs, text="Cartella Carburante / Root:", font=(FONT_FAMILY, 10, "bold"), bg="#ffffff", fg="#334155").pack(anchor="w", pady=(0, 4))
+tk.Label(frame_inputs, text="Cartella Carburante / Root:", font=(FONT_FAMILY, 9, "bold"), bg="#ffffff", fg="#334155").pack(anchor="w", pady=(0, 2))
 
 frame_path_row = tk.Frame(frame_inputs, bg="#ffffff")
 frame_path_row.pack(fill="x")
 
-entry_path = tk.Entry(frame_path_row, font=(FONT_FAMILY, 10), relief="solid", bd=1)
-entry_path.pack(side="left", fill="x", expand=True, ipady=4, padx=(0, 8))
+entry_path = tk.Entry(frame_path_row, font=(FONT_FAMILY, 9), relief="solid", bd=1)
+entry_path.pack(side="left", fill="x", expand=True, ipady=3, padx=(0, 6))
 
-btn_browse = tk.Button(frame_path_row, text="Sfoglia...", command=seleziona_cartella, font=(FONT_FAMILY, 9, "bold"), bg="#e2e8f0", fg="#334155", relief="flat", cursor="hand2", padx=12, pady=4)
+btn_browse = tk.Button(frame_path_row, text="Sfoglia...", command=seleziona_cartella, font=(FONT_FAMILY, 8, "bold"), bg="#e2e8f0", fg="#334155", relief="flat", cursor="hand2", padx=10, pady=3)
 btn_browse.pack(side="right")
 
-btn_start = tk.Button(root, text="Avvia Estrazione Gasolio", command=avvia_estrazione, bg="#2e7d32", fg="white", font=(FONT_FAMILY, 11, "bold"), relief="flat", cursor="hand2", pady=8, padx=20)
-btn_start.pack(pady=20)
+btn_start = tk.Button(root, text="Avvia Estrazione", command=avvia_estrazione, bg="#2e7d32", fg="white", font=(FONT_FAMILY, 10, "bold"), relief="flat", cursor="hand2", pady=6, padx=15)
+btn_start.pack(pady=15)
 
 progress = ttk.Progressbar(root, orient="horizontal", length=460, mode="determinate")
-progress.pack(pady=(0, 5))
+progress.pack(pady=(0, 4))
 
 lbl_status = tk.Label(root, text="In attesa...", font=(FONT_FAMILY, 8), bg="#ffffff", fg="#64748b")
 lbl_status.pack(pady=(0, 10))
