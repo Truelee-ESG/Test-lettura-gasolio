@@ -8,29 +8,44 @@ from tkinter import filedialog, messagebox, scrolledtext
 import fitz  # PyMuPDF per la lettura dei PDF
 from PIL import Image
 import pandas as pd
-import pytesseract  # Per OCR su scansioni/immagini
 import requests
+
+# Tentativo di importare pytesseract in modo sicuro
+try:
+  import pytesseract
+
+  OCR_DISPONIBILE = True
+except ImportError:
+  OCR_DISPONIBILE = False
 
 
 def estrai_testo_sicuro(pdf_path):
-  """Estrae il testo sia da PDF digitali che da scansioni/immagini tramite OCR."""
+  """Estrae il testo da PDF digitali e gestisce le scansioni."""
   testo_totale = ""
+  is_scansione = False
   try:
     doc = fitz.open(pdf_path)
     for numero_pagina, pagina in enumerate(doc):
       testo_pagina = pagina.get_text()
 
+      # Se il testo nativo è quasi vuoto, è una scansione o un'immagine
       if len(testo_pagina.strip()) < 30:
-        pix = pagina.get_pixmap(dpi=300)
-        img_data = pix.tobytes("png")
-        img = Image.open(io.BytesIO(img_data))
-        testo_pagina = pytesseract.image_to_string(img, lang="ita")
+        is_scansione = True
+        if OCR_DISPONIBILE:
+          try:
+            pix = pagina.get_pixmap(dpi=300)
+            img_data = pix.tobytes("png")
+            img = Image.open(io.BytesIO(img_data))
+            testo_pagina = pytesseract.image_to_string(img, lang="ita")
+          except Exception as ocr_err:
+            print("Errore esecuzione OCR:", ocr_err)
 
       testo_totale += f"\n--- Pagina {numero_pagina + 1} ---\n" + testo_pagina
     doc.close()
   except Exception as e:
-    print("Errore durante l'estrazione del PDF:", e)
-  return testo_totale
+    print("Errore durante l'apertura del PDF:", e)
+
+  return testo_totale, is_scansione
 
 
 def save_to_excel(data_dict):
@@ -63,14 +78,21 @@ def save_to_excel(data_dict):
 
 def analyze_bill(pdf_path, result_box, status_label, btn_analyze):
   try:
-    status_label.config(text="Estrazione testo in corso (nativo / OCR)...")
-    raw_text = estrai_testo_sicuro(pdf_path)
+    status_label.config(text="Estrazione testo in corso...")
+    raw_text, is_scansione = estrai_testo_sicuro(pdf_path)
 
     if not raw_text.strip():
-      messagebox.showerror(
-          "Errore",
-          "Impossibile estrarre alcun testo dal PDF selezionato.",
-      )
+      if is_scansione:
+        messagebox.showerror(
+            "PDF Scansionato",
+            "Il file selezionato è un'immagine/scansione, ma il motore OCR"
+            " Tesseract non è configurato sul PC.\nProva a usare un PDF con"
+            " testo digitale.",
+        )
+      else:
+        messagebox.showerror(
+            "Errore", "Impossibile estrarre alcun testo dal PDF selezionato."
+        )
       status_label.config(text="Pronto")
       btn_analyze.config(state=tk.NORMAL)
       return
