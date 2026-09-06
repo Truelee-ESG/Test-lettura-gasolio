@@ -4,18 +4,20 @@ import os
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
+import fitz  # PyMuPDF
 import pandas as pd
-import pdfplumber
 import requests
 
 
 def extract_text_from_pdf(pdf_path):
   text = ""
-  with pdfplumber.open(pdf_path) as pdf:
-    for page in pdf.pages:
-      extracted = page.extract_text()
-      if extracted:
-        text += extracted + "\n"
+  try:
+    doc = fitz.open(pdf_path)
+    for page in doc:
+      text += page.get_text() + "\n"
+    doc.close()
+  except Exception as e:
+    print("Errore lettura PDF con PyMuPDF:", e)
   return text
 
 
@@ -54,8 +56,8 @@ def analyze_bill(pdf_path, result_box, status_label, btn_analyze):
     if not raw_text.strip():
       messagebox.showerror(
           "Errore",
-          "Impossibile estrarre testo dal PDF. Potrebbe essere un'immagine"
-          " scansionata.",
+          "Il PDF sembra non contenere testo leggibile (potrebbe essere una"
+          " scansione pura o un'immagine).",
       )
       status_label.config(text="Pronto")
       btn_analyze.config(state=tk.NORMAL)
