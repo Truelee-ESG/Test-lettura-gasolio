@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 import fitz  # PyMuPDF per la lettura dei PDF
 from PIL import Image
--import pandas as pd
+import pandas as pd
 import pytesseract  # Per OCR su scansioni/immagini
 import requests
 
@@ -18,10 +18,8 @@ def estrai_testo_sicuro(pdf_path):
   try:
     doc = fitz.open(pdf_path)
     for numero_pagina, pagina in enumerate(doc):
-      # Tentativo di estrazione del testo digitale nativo
       testo_pagina = pagina.get_text()
 
-      # Se il testo è quasi vuoto, è una scansione o una foto: usiamo l'OCR
       if len(testo_pagina.strip()) < 30:
         pix = pagina.get_pixmap(dpi=300)
         img_data = pix.tobytes("png")
