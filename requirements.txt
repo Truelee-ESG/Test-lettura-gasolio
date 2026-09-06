@@ -1,5 +1,7 @@
 PyMuPDF
+pytesseract
+Pillow
 requests
-pyinstaller
 pandas
 openpyxl
+pyinstaller
